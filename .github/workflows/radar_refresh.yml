@@ -1,0 +1,92 @@
+name: PredMarket Arb Radar Refresh
+
+on:
+  schedule:
+    # Runs every 30 minutes (:17 and :47 past the hour) on free GitHub Actions runners — zero local load.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      slippage_bps:
+        description: "Optional conservative taker slippage buffer in bps (default 0.0)"
+        required: false
+        default: "0.0"
+      enrich_books:
+        description: "Fetch live Polymarket CLOB & Kalshi orderbook depth for top signals"
+        required: false
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: predmarket-arb-radar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run unit test suite
+        run: pytest -v
+
+      - name: Restore alert deduplication state cache
+        uses: actions/cache@v4
+        with:
+          path: state/alert_state.json
+          key: radar-alert-state-${{ github.run_id }}
+          restore-keys: |
+            radar-alert-state-
+
+      - name: Run live read-only scan, rebuild GitHub Pages dashboard, and dispatch optional alerts
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RADAR_SLIPPAGE_BPS: ${{ github.event.inputs.slippage_bps || vars.RADAR_SLIPPAGE_BPS || '0.0' }}
+          RADAR_MIN_DIVERGENCE_PP: ${{ vars.RADAR_MIN_DIVERGENCE_PP || '3.0' }}
+          RADAR_ALERT_COOLDOWN_SEC: ${{ vars.RADAR_ALERT_COOLDOWN_SEC || '21600' }}
+        run: |
+          EXTRA_FLAGS=""
+          if [ "${{ github.event.inputs.enrich_books }}" = "false" ]; then
+            EXTRA_FLAGS="--no-books"
+          fi
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "Pull request run — building dashboard in dry-run verification mode (no webhooks fired)."
+            predmarket-radar build-dashboard --docs-dir docs ${EXTRA_FLAGS}
+          else
+            predmarket-radar build-dashboard --docs-dir docs --alert ${EXTRA_FLAGS}
+          fi
+
+      - name: Commit refreshed live radar snapshot to GitHub Pages (main/docs)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/latest_scan.json docs/index.html docs/.nojekyll
+          if git diff --cached --quiet; then
+            echo "No dashboard changes to commit."
+          else
+            git commit -m "chore(radar): refresh live Polymarket/Kalshi/Manifold scan"
+            git push origin HEAD:main
+          fi

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "predmarket-arb-radar"
+version = "1.0.0"
+description = "Read-only cross-platform prediction market arbitrage, multi-outcome Dutch-book, and probability divergence radar across Polymarket, Kalshi, and Manifold Markets."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+  {name = "pecopeko", email = "198374676+pecopeko@users.noreply.github.com"}
+]
+keywords = [
+  "polymarket",
+  "kalshi",
+  "manifold-markets",
+  "prediction-markets",
+  "arbitrage",
+  "dutch-book",
+  "quant",
+  "discord-bot",
+]
+dependencies = [
+  "httpx>=0.27.0",
+  "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+predmarket-radar = "predmarket_radar.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
